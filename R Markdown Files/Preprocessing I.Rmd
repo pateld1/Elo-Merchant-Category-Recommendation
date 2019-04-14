@@ -1,0 +1,240 @@
+---
+title: "Elo Merchant Category Recommendation Preprocessing"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+Read in data.
+```{r}
+rm(list = ls())
+library(tidyverse)
+library(grid)
+library(gridExtra)
+library(RColorBrewer)
+library(lubridate)
+library(imputeMissings)
+
+train = read_delim("train.csv", delim = ',')
+test = read_delim("test.csv", delim = ',')
+merchants = read_delim("merchants.csv", delim = ',')
+new_trans = read_delim("new_merchant_transactions.csv", delim = ',')
+hist_trans = read_delim("historical_transactions.csv", delim = ',')
+```
+
+## Factorize and Create New Columns
+
+Historical Transactions
+```{r}
+hist_trans$authorized_flag = ifelse(hist_trans$authorized_flag == "Y", 1, 0)
+hist_trans$year = year(hist_trans$purchase_date)
+hist_trans$month = month(hist_trans$purchase_date)
+hist_trans$day = day(hist_trans$purchase_date)
+hist_trans$hour = hour(hist_trans$purchase_date)
+hist_trans$minute = minute(hist_trans$purchase_date)
+hist_trans$second = second(hist_trans$purchase_date)
+```
+
+New Transactions
+```{r}
+new_trans$authorized_flag = ifelse(new_trans$authorized_flag == "Y", 1, 0)
+new_trans$year = year(new_trans$purchase_date)
+new_trans$month = month(new_trans$purchase_date)
+new_trans$day = day(new_trans$purchase_date)
+new_trans$hour = hour(new_trans$purchase_date)
+new_trans$minute = minute(new_trans$purchase_date)
+new_trans$second = second(new_trans$purchase_date)
+```
+
+
+## Remove Values that are Improperly Recorded (such as -1, 999, etc.) and Outliers in Purchase Amount
+```{r}
+summary(hist_trans)
+```
+
+Things to remove: high number of installments (> 12), high (normalized) purchase amount (> 1), id values of -1 (city_id, merchant_category_id, state_id, subsector_id)
+
+```{r}
+hist_trans[hist_trans$installments > 12 | hist_trans$installments < 0, "installments"] = NA
+hist_trans[hist_trans$purchase_amount > 1, "purchase_amount"] = NA
+hist_trans[hist_trans$city_id == -1, "city_id"] = NA
+hist_trans[hist_trans$merchant_category_id == -1, "merchant_category_id"] = NA
+hist_trans[hist_trans$state_id == -1, "state_id"] = NA
+hist_trans[hist_trans$subsector_id == -1, "subsector_id"] = NA
+```
+
+```{r}
+summary(new_trans)
+```
+
+```{r}
+new_trans[new_trans$installments > 12 | new_trans$installments < 0, "installments"] = NA
+new_trans[new_trans$purchase_amount > 1, "purchase_amount"] = NA
+new_trans[new_trans$city_id == -1, "city_id"] = NA
+new_trans[new_trans$merchant_category_id == -1, "merchant_category_id"] = NA
+new_trans[new_trans$state_id == -1, "state_id"] = NA
+new_trans[new_trans$subsector_id == -1, "subsector_id"] = NA
+```
+
+## Missing Value Imputation 
+
+Historical transactions
+```{r}
+sapply(hist_trans, function(x) any(is.na(x)))
+```
+
+```{r}
+hist_trans = impute(hist_trans)
+```
+
+New Transactions
+```{r}
+sapply(new_trans, function(x) any(is.na(x)))
+```
+
+```{r}
+new_trans = impute(new_trans)
+```
+
+## Aggregation
+
+Create mode function
+```{r}
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+```
+
+Things to aggregate by group of functions:
+- card_id: tally
+- authorized_flag: mean, sd, mode, median, min, max, n_distinct
+- installments: mean, sd, mode, median, min, max, n_distinct
+- month_lag: mean, sd, mode, median, min, max, n_distinct,
+- purchase_amount: mean, sd, mode, median, min, max, n_distinct
+- city_id: n_distinct, mode
+- merchant_category_id: n_distinct, mode
+- merchant_id: n_distinct, mode
+- state_id: n_distinct, mode
+- subsector_id: n_distinct, mode
+- category_1: n_distinct, mode
+- category_2: n_distinct, mode
+- category_3: n_distinct, mode
+- year: n_distinct, mode, min, max
+- month: n_distinct, mode, min, max
+- day: n_distinct, mode, min, max
+- hour: n_distinct, mode, min, max
+- minute: n_distinct, mode, min, max
+- second: n_distinct, mode, min, max
+- purchase_date: latest, earliest, latest - earliest
+
+Store collection of columns
+```{r}
+var_1 = c("authorized_flag", "installments", "month_lag", "purchase_amount")
+var_2 = c("city_id", "merchant_id", "merchant_category_id", "state_id", "subsector_id")
+var_3 = c("year", "month", "day", "hour", "minute", "second")
+var_4 = c("category_1", "category_2", "category_3")
+```
+
+For new transactions:
+```{r}
+nt_0 = new_trans %>% group_by(card_id) %>% 
+  count(card_id) %>% ungroup()
+nt_1 = new_trans %>% select(card_id, var_1) %>% group_by(card_id) %>% 
+  summarize_at(.vars = var_1, 
+               .funs = c("mean", "sd", "Mode",
+                         "median", "min", "max", "n_distinct")) %>% ungroup()
+nt_2 = new_trans %>% select(card_id, var_2) %>% group_by(card_id) %>% 
+  summarize_at(.vars = var_2, 
+               .funs = c("n_distinct", "Mode")) %>% ungroup() 
+nt_3 = new_trans %>% select(card_id, var_3) %>% group_by(card_id) %>% 
+  summarize_at(.vars = var_3, 
+               .funs = c("n_distinct", "Mode", 
+                         "min", "max")) %>% ungroup() 
+nt_4 = new_trans %>% select(card_id, var_4) %>% group_by(card_id) %>% 
+  summarize_at(.vars = var_4, 
+               .funs = c("n_distinct", "Mode")) %>% ungroup() 
+nt_5 = new_trans %>% select(card_id, purchase_date) %>% group_by(card_id) %>% 
+  mutate("purchase_date_max" = max(purchase_date), 
+         "purchase_date_min" =  min(purchase_date), 
+         "purchase_date_range" = as.numeric(difftime(max(purchase_date), 
+                                                     min(purchase_date), 
+                                                     units = "d"))) %>% 
+  filter(row_number() == 1)
+```
+
+Put columns together and keep distinct rows 
+```{r}
+new_trans_overall = left_join(nt_0, nt_1, on = card_id) %>% 
+  left_join(., nt_2, on = card_id) %>% 
+  left_join(., nt_3, on = card_id) %>% 
+  left_join(., nt_4, on = card_id) %>% 
+  left_join(., nt_5, on = card_id) %>% 
+  distinct(.,card_id, .keep_all= TRUE)
+```
+
+```{r}
+which(sapply(new_trans_overall, function(x) any(is.na(x))))
+```
+
+Replace null standard deviations with 0
+```{r}
+new_trans_overall$authorized_flag_sd = new_trans_overall$authorized_flag_sd %>% replace_na(0)
+new_trans_overall$installments_sd = new_trans_overall$installments_sd %>% replace_na(0)
+new_trans_overall$month_lag_sd = new_trans_overall$month_lag_sd %>% replace_na(0)
+new_trans_overall$purchase_amount_sd = new_trans_overall$purchase_amount_sd %>% replace_na(0)
+```
+
+Save aggregated new transactions file
+```{r}
+write.csv(new_trans_overall, file = "new_transactions_explained.csv")
+rm(nt_0, nt_1, nt_2, nt_3, nt_4, nt_5, new_trans, new_trans_overall)
+```
+
+For nistorical transactions: 
+```{r}
+ht_0 = hist_trans %>% group_by(card_id) %>% 
+  count(card_id) %>% ungroup() 
+ht_1 = hist_trans %>% select(card_id, var_1) %>% group_by(card_id) %>% 
+  summarize_at(.vars = var_1, 
+               .funs = c("mean", "sd", "Mode", 
+                         "median", "min", "max", "n_distinct")) %>% ungroup() 
+ht_2 = hist_trans %>% select(card_id, var_2) %>% group_by(card_id) %>% 
+  summarize_at(.vars = var_2, 
+               .funs = c("n_distinct", "Mode")) %>% ungroup() 
+ht_3 = hist_trans %>% select(card_id, var_3) %>% group_by(card_id) %>% 
+  summarize_at(.vars = var_3, 
+               .funs = c("n_distinct", "Mode", 
+                         "min", "max")) %>% ungroup() 
+ht_4 = hist_trans %>% select(card_id, var_4) %>% group_by(card_id) %>% 
+  summarize_at(.vars = var_4, 
+               .funs = c("n_distinct", "Mode")) %>% ungroup() 
+ht_5 = hist_trans %>% select(card_id, purchase_date) %>% group_by(card_id) %>% 
+  mutate("purchase_date_max" = max(purchase_date), 
+         "purchase_date_min" =  min(purchase_date), 
+         "purchase_date_range" = as.numeric(difftime(max(purchase_date), 
+                                                     min(purchase_date), 
+                                                     units = "d"))) %>% 
+  filter(row_number() == 1)
+```
+
+Put columns together and keep distinct rows
+```{r}
+hist_trans_overall = left_join(ht_0, ht_1, on = card_id) %>% 
+  left_join(., ht_2, on = card_id) %>% 
+  left_join(., ht_3, on = card_id) %>% 
+  left_join(., ht_4, on = card_id) %>% 
+  left_join(., ht_5, on = card_id) %>% 
+  distinct(.,card_id, .keep_all= TRUE)
+```
+
+```{r}
+which(sapply(hist_trans_overall, function(x) any(is.na(x))))
+```
+
+Save aggregated historical transactions file
+```{r}
+write.csv(hist_trans_overall, file = "historical_transactions_explained.csv")
+rm(ht_0, ht_1, ht_2, ht_3, ht_4, ht_5, hist_trans, hist_trans_overall)
+```

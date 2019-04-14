@@ -1,0 +1,154 @@
+---
+title: "Elo Merchant Category Recommendation Preprocessing II"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+Read in data.
+```{r}
+rm(list = ls())
+install.packages("cattonum")
+library(tidyverse)
+library(lubridate)
+library(imputeMissings)
+library(cattonum)
+
+train = read_delim("train.csv", delim = ',')
+test = read_delim("test.csv", delim = ',')
+merchants = read_delim("merchants.csv", delim = ',')
+new_trans = read_delim("new_transactions_explained.csv", delim = ',')
+hist_trans = read_delim("historical_transactions_explained.csv", delim = ',')
+```
+
+```{r}
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+```
+
+## Merchant
+
+```{r}
+which(sapply(merchants, function(x) any(is.na(x))))
+```
+
+Replace category 2 with mode. Can't impute average sales thus remove those observations
+```{r}
+merchants$category_2 = replace_na(merchants$category_2, Mode(merchants$category_2))
+merchants = merchants[complete.cases(merchants),]
+```
+
+Binarize categories
+```{r}
+merchants$category_1 = ifelse(merchants$category_1 == "Y", 1, 0)
+merchants$category_4 = ifelse(merchants$category_4 == "Y", 1, 0)
+```
+
+Add Merchant data to transactions data independently 
+```{r}
+new_trans = new_trans %>% left_join(., merchants, by = c("merchant_id_Mode" = "merchant_id"))
+hist_trans = hist_trans %>% left_join(., merchants, by = c("merchant_id_Mode" = "merchant_id"))
+```
+
+Merge transactions columns - first rename all columns using respective transaction types except `X1` and `card_id`
+```{r}
+all(colnames(hist_trans) == colnames(new_trans))
+new_trans_colnames = paste("new", colnames(new_trans)[seq(3,length(colnames(new_trans)),1)], sep = "_")
+colnames(new_trans)[seq(3,length(colnames(new_trans)),1)] = new_trans_colnames
+hist_trans_colnames = paste("hist", colnames(hist_trans)[seq(3,length(colnames(hist_trans)),1)], sep = "_")
+colnames(hist_trans)[seq(3,length(colnames(hist_trans)),1)] = hist_trans_colnames
+```
+
+Now merge
+```{r}
+transactions = merge(hist_trans, new_trans, by = "card_id")
+```
+
+Merge transactions data with training data and testing data 
+MAKE SURE ALL CARD IDS ARE MATCHED AND THEN DISCARDED ! 
+```{r}
+train = train %>% left_join(., transactions, by = "card_id") %>% distinct(card_id, .keep_all = TRUE) %>%
+  subset(select = -c(X1.x, X1.y)) %>% 
+  mutate(first_activity = as.numeric(ymd(first_active_month, truncated = 1))) %>%
+  mutate("first_active_year" = year(ymd(first_active_month, truncated = 1)), "first_active_month" = month(ymd(first_active_month, truncated = 1)),
+         "hist_purchase_date_year" = year(hist_purchase_date), "hist_purchase_date_month" = month(hist_purchase_date), "hist_purchase_date_day" = day(hist_purchase_date), 
+         "hist_purchase_date_hour" = hour(hist_purchase_date), "hist_purchase_date_minute" = minute(hist_purchase_date), "hist_purchase_date_num" = as.numeric(hist_purchase_date),
+         "new_purchase_date_year" = year(new_purchase_date), "new_purchase_date_month" = month(new_purchase_date), "new_purchase_date_day" = day(new_purchase_date), 
+         "new_purchase_date_hour" = hour(new_purchase_date), "new_purchase_date_day" = day(new_purchase_date), "new_purchase_date_num" = as.numeric(new_purchase_date)) %>% 
+  subset(select = -c(first_active_month, hist_purchase_date, new_purchase_date, hist_purchase_date_max, hist_purchase_date_min, new_purchase_date_max, new_purchase_date_min, card_id))
+
+test = test %>% left_join(., transactions, by = "card_id") %>% distinct(card_id, .keep_all = TRUE) %>%
+  subset(select = -c(X1.x, X1.y)) %>% 
+  mutate(first_activity = as.numeric(ymd(first_active_month, truncated = 1))) %>%
+  mutate("first_active_year" = year(ymd(first_active_month, truncated = 1)), "first_active_month" = month(ymd(first_active_month, truncated = 1)),
+         "hist_purchase_date_year" = year(hist_purchase_date), "hist_purchase_date_month" = month(hist_purchase_date), "hist_purchase_date_day" = day(hist_purchase_date), 
+         "hist_purchase_date_hour" = hour(hist_purchase_date), "hist_purchase_date_minute" = minute(hist_purchase_date), "hist_purchase_date_num" = as.numeric(hist_purchase_date),
+         "new_purchase_date_year" = year(new_purchase_date), "new_purchase_date_month" = month(new_purchase_date), "new_purchase_date_day" = day(new_purchase_date), 
+         "new_purchase_date_hour" = hour(new_purchase_date), "new_purchase_date_day" = day(new_purchase_date), "new_purchase_date_num" = as.numeric(new_purchase_date)) %>% 
+  subset(select = -c(first_active_month, hist_purchase_date, new_purchase_date, hist_purchase_date_max, hist_purchase_date_min, new_purchase_date_max, new_purchase_date_min, card_id))
+```
+
+Impute missing values
+```{r}
+train = impute(train)
+test = impute(test)
+```
+
+Create vector of variables that need to be encoded
+```{r}
+num_cities = c("hist_city_id_Mode", "hist_city_id", "new_city_id_Mode", "new_city_id")
+num_states = c("hist_state_id_Mode", "hist_state_id", "new_state_id_Mode", "new_state_id")
+num_subsectors = c("hist_subsector_id_Mode", "hist_subsector_id", "new_subsector_id_Mode", "new_subsector_id")
+num_merch_IDs = c("hist_merchant_id_Mode", "new_merchant_id_Mode")
+num_merch_cats = c("hist_merchant_category_id_Mode", "hist_merchant_category_id", "new_merchant_category_id_Mode", "new_merchant_category_id")
+num_merch_groups = c("hist_merchant_group_id", "new_merchant_group_id")
+num_collection = c(num_cities, num_states, num_subsectors, num_merch_cats, num_merch_groups, num_merch_IDs)
+```
+
+Frequency Encoding
+```{r}
+target = train$target
+train = train %>% subset(select = -c(target))
+new_dfs = catto_freq(train, num_collection, test = test)
+```
+
+One Hot Encoding
+
+Create vector of category variables that need to be one hot encoded
+```{r}
+ohe_cols = c("hist_category_1_Mode", "hist_category_2_Mode", "hist_category_3_Mode", "hist_most_recent_sales_range", "hist_most_recent_purchases_range", 
+             "new_category_1_Mode", "new_category_2_Mode", "new_category_3_Mode", "new_most_recent_sales_range", "new_most_recent_purchases_range")
+```
+
+One Hot Encoding
+```{r}
+new_dfs = catto_onehot(new_dfs$train, ohe_cols, test = new_dfs$test)
+```
+
+Recreate training and test sets from encoded tables
+```{r}
+train = new_dfs$train %>% cbind(target, .)
+test = new_dfs$test
+```
+
+Check both training set and test set are of numeric form.
+```{r}
+which(sapply(train, function(x) !is.numeric(x)))
+which(sapply(test, function(x) !is.numeric(x)))
+```
+
+Impute missing values.
+```{r}
+train = impute(train)
+test = impute(test)
+```
+
+Save train and test files
+```{r}
+write.csv(train, file = "train_modeling.csv")
+write.csv(test, file = "test_modeling.csv")
+```
+

@@ -1,0 +1,687 @@
+---
+title: "Elo Merchant Category Recommendation EDA"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+Read in data.
+```{r}
+rm(list = ls())
+library(tidyverse)
+library(grid)
+library(gridExtra)
+library(RColorBrewer)
+library(lubridate)
+library(scales)
+
+train = read_delim("train.csv", delim = ',')
+test = read_delim("test.csv", delim = ',')
+merchants = read_delim("merchants.csv", delim = ',')
+new_trans = read_delim("new_merchant_transactions.csv", delim = ',')
+hist_trans = read_delim("historical_transactions.csv", delim = ',')
+```
+
+## EDA of Training and Testing Data
+
+Create plots of features.
+```{r}
+train_colors = brewer.pal(4, "Accent")
+g1 = ggplot(train, aes(feature_1)) + 
+  geom_histogram(binwidth = 1, fill = train_colors[1], color = "black") + 
+  labs(x = "Feature 1", y = "number of cards", 
+       title = "Distribution of Feature 1", subtitle = "in Training Data") + 
+  theme_minimal() + theme(plot.title = element_text(size=10), 
+                          plot.subtitle = element_text(size = 10))
+g2 = ggplot(train, aes(feature_2)) + 
+  geom_histogram(binwidth = 1, fill = train_colors[2], color = "black") + 
+  labs(x = "Feature 2", y = "number of cards", 
+       title = "Distribution of Feature 2", subtitle = "in Training Data") + 
+  theme_minimal() + theme(plot.title = element_text(size=10), 
+                          plot.subtitle = element_text(size = 10))
+g3 = ggplot(train, aes(feature_3)) + 
+  geom_histogram(binwidth = 0.5, fill = train_colors[3], color = "black") + 
+  labs(x = "Feature 3", y = "number of cards", 
+       title = "Distribution of Feature 3", subtitle = "in Training Data") + 
+  theme_minimal() + theme(plot.title = element_text(size=10), 
+                          plot.subtitle = element_text(size = 10))
+g4 = ggplot(test, aes(feature_1)) + 
+  geom_histogram(binwidth = 1, fill = train_colors[1], color = "black") + 
+  labs(x = "Feature 1", y = "number of cards", 
+       title = "Distribution of Feature 1", subtitle = "in Testing Data") + 
+  theme_minimal() + theme(plot.title = element_text(size=10), 
+                          plot.subtitle = element_text(size = 10))
+g5 = ggplot(test, aes(feature_2)) + 
+  geom_histogram(binwidth = 1, fill = train_colors[2], color = "black") + 
+  labs(x = "Feature 2", y = "number of cards",
+       title = "Distribution of Feature 2", subtitle = "in Testing Data") + 
+  theme_minimal() + theme(plot.title = element_text(size=10), 
+                          plot.subtitle = element_text(size = 10))
+g6 = ggplot(test, aes(feature_3)) + 
+  geom_histogram(binwidth = 0.5, fill = train_colors[3], color = "black") + 
+  labs(x = "Feature 3", y = "number of cards", 
+       title = "Distribution of Feature 3", subtitle = "in Testing Data") + 
+  theme_minimal() + theme(plot.title = element_text(size=10), 
+                          plot.subtitle = element_text(size = 10))
+features = grid.arrange(g1, g2, g3, g4, g5, g6, ncol = 3)
+ggsave("features.png", features, height = 7, width = 7, units = "in")
+```
+
+Distribution of Loyalty Score
+```{r}
+ts1 = ggplot(train, aes(target)) + 
+  geom_histogram(binwidth = 1, fill = train_colors[4], color = "black") + 
+  labs(x = "Loyalty Score", y = "number of cards", 
+       title = "Distribution of Loyalty Scores", subtitle = "in Training Data") + 
+  theme_minimal() + theme(plot.title = element_text(size=16), 
+                          plot.subtitle = element_text(size = 14))
+ts1
+ggsave("target.png", ts1, height = 7, width = 7, units = "in")
+```
+
+Distribution of Target with Features 
+```{r}
+t1 = train %>% select(target, feature_1) %>% 
+  ggplot(aes(x = factor(feature_1), y = target, fill = as.factor(feature_1))) + 
+  geom_boxplot(outlier.shape = NA) + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Blue", "Violet"))(5)) + 
+  scale_y_continuous(limits = quantile(train$target, c(0.1, 0.9))) +
+  labs(x = "Feature 1", y = "Loyalty Score", 
+       title = "Distribution of Loyalty Scores", subtitle = "by Feature 1") + 
+  theme_minimal() + theme(legend.position="none")
+t2 = train %>% select(target, feature_2) %>% 
+  ggplot(aes(x = factor(feature_2), y = target, fill = as.factor(feature_2))) + 
+  geom_boxplot(outlier.shape = NA) + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Blue", "Violet"))(3)) + 
+  scale_y_continuous(limits = quantile(train$target, c(0.1, 0.9))) +
+  labs(x = "Feature 2", y = "Loyalty Score", 
+       title = "Distribution of Loyalty Scores", subtitle = "by Feature 2") + 
+  theme_minimal() + theme(legend.position="none")
+t3 = train %>% select(target, feature_3) %>% 
+  ggplot(aes(x = factor(feature_3), y = target, fill = as.factor(feature_3))) + 
+  geom_boxplot(outlier.shape = NA) + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Blue", "Violet"))(2)) + 
+  scale_y_continuous(limits = quantile(train$target, c(0.1, 0.9))) +
+  labs(x = "Feature 3", y = "Loyalty Score", 
+       title = "Distribution of Loyalty Scores", subtitle = "by Feature 3") + 
+  theme_minimal() + theme(legend.position="none")
+target_feature_dist = grid.arrange(t1, arrangeGrob(t2, t3, ncol = 2), ncol = 1)
+ggsave("target_feat.png", target_feature_dist, height = 7, width = 7, units = "in")
+```
+
+Look at first active month. 
+```{r}
+train_dates = train %>% count("date" = ymd(first_active_month, truncated = 1)) %>% 
+  select(date, "count_train" = n)
+test_dates = test %>% na.omit() %>% count("date" = ymd(first_active_month, truncated = 1)) %>% 
+  select(date, "count_test" = n)
+fam_plot = inner_join(train_dates, test_dates, by = "date") %>% 
+  gather(key, value, count_train, count_test) %>% 
+  ggplot(aes(x = date, y = value, fill = key)) + 
+  geom_bar(stat = "identity", color = "black") + 
+  scale_x_date(limits = as.Date(c("2012-01-01","2018-01-01")), 
+               minor_breaks = as.Date(c("2012-01-01", "2018-01-01"))) + 
+  scale_fill_brewer(name = "Data", labels = c("Test", "Train"), 
+                    palette = "Dark2") +
+  labs(x = "year", y = "number of transactions", 
+       title = "Distribution of First Active Month", 
+       subtitle = "for Training and Testing Data") + 
+  theme_minimal() + theme(legend.position = "bottom")
+fam_plot
+ggsave("fam_plot.png", fam_plot, height = 7, width = 7, units = "in")
+```
+
+## Factorize
+Historical Transactions
+```{r}
+hist_trans$authorized_flag = as.factor(hist_trans$authorized_flag)
+hist_trans$city_id = as.factor(hist_trans$city_id)
+hist_trans$state_id = as.factor(hist_trans$state_id)
+hist_trans$subsector_id = as.factor(hist_trans$subsector_id)
+hist_trans$category_1 = as.factor(hist_trans$category_1)
+hist_trans$category_2 = as.factor(hist_trans$category_2)
+hist_trans$category_3 = as.factor(hist_trans$category_3)
+hist_trans$merchant_category_id = as.factor(hist_trans$merchant_category_id)
+hist_trans$merchant_id = as.factor(hist_trans$merchant_id)
+hist_trans$year = year(hist_trans$purchase_date)
+hist_trans$month = month(hist_trans$purchase_date)
+hist_trans$day = day(hist_trans$purchase_date)
+hist_trans$hour = hour(hist_trans$purchase_date)
+hist_trans$minute = minute(hist_trans$purchase_date)
+hist_trans$second = second(hist_trans$purchase_date)
+```
+
+New Transactions
+```{r}
+new_trans$authorized_flag = as.factor(new_trans$authorized_flag)
+new_trans$city_id = as.factor(new_trans$city_id)
+new_trans$state_id = as.factor(new_trans$state_id)
+new_trans$subsector_id = as.factor(new_trans$subsector_id)
+new_trans$category_1 = as.factor(new_trans$category_1)
+new_trans$category_2 = as.factor(new_trans$category_2)
+new_trans$category_3 = as.factor(new_trans$category_3)
+new_trans$merchant_category_id = as.factor(new_trans$merchant_category_id)
+new_trans$merchant_id = as.factor(new_trans$merchant_id)
+new_trans$year = year(new_trans$purchase_date)
+new_trans$month = month(new_trans$purchase_date)
+new_trans$day = day(new_trans$purchase_date)
+new_trans$hour = hour(new_trans$purchase_date)
+new_trans$minute = minute(new_trans$purchase_date)
+new_trans$second = second(new_trans$purchase_date)
+```
+
+Distribution of Categories
+```{r}
+c1 = hist_trans %>% count(category_1) %>% 
+  ggplot(aes(x = category_1, y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Green", "Blue"))(2)) + 
+  labs(x = "Category 1", y = "Number of Historical Transactions", 
+       title = "Distribution of Category 1", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 30000000), 
+                     breaks = c(0, 15000000, 30000000), 
+                     labels = c(0, 15000000, 30000000)) + 
+  coord_flip() + theme_minimal() + theme(legend.position="none")
+
+c2 = hist_trans %>% count(category_2) %>% 
+  ggplot(aes(x = category_2, y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Green", "Blue"))(6)) + 
+  labs(x = "Category 2", y = "Number of Historical Transactions", 
+       title = "Distribution of Category 2", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 16000000), 
+                     breaks = c(0, 8000000, 16000000), 
+                     labels = c(0, 8000000, 160000000)) + 
+  coord_flip() + theme_minimal() + theme(legend.position="none")
+
+c3 = hist_trans %>% count(category_3) %>% 
+  ggplot(aes(x = category_3, y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Green", "Blue"))(4)) + 
+  labs(x = "Category 3", y = "Number of Historical Transactions", 
+       title = "Distribution of Category 3", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 18000000), 
+                     breaks = c(0, 8000000, 16000000), 
+                     labels = c(0, 8000000, 160000000)) + 
+  coord_flip() + theme_minimal() + theme(legend.position="none")
+
+c4 = new_trans %>% count(category_1) %>% 
+  ggplot(aes(x = category_1, y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Orange", "Red"))(2)) + 
+  labs(x = "Category 1", y = "Number of New Transactions", 
+       title = "Distribution of Category 1", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 2500000), 
+                     breaks = c(0, 1250000, 2500000), 
+                     labels = c(0, scientific(1250000), scientific(2500000))) + 
+  coord_flip() + theme_minimal() + theme(legend.position="none")
+
+c5 = new_trans %>% count(category_2) %>% 
+  ggplot(aes(x = category_2, y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Orange", "Red"))(6)) + 
+  labs(x = "Category 2", y = "Number of New Transactions", 
+       title = "Distribution of Category 2", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 1200000), 
+                     breaks = c(0, 600000, 1200000), 
+                     labels = c(0, 600000, 12000000)) + 
+  coord_flip() + theme_minimal() + theme(legend.position="none")
+
+c6 = new_trans %>% count(category_3) %>% 
+  ggplot(aes(x = category_3, y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Orange", "Red"))(4)) + 
+  labs(x = "Category 3", y = "Number of New Transactions", 
+       title = "Distribution of Category 3", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 1200000), 
+                     breaks = c(0, 600000, 1200000), 
+                     labels = c(0, 600000, 12000000)) + 
+  coord_flip() + theme_minimal() + theme(legend.position="none")
+cat_plot = grid.arrange(c1, c4, c2, c5, c3, c6, nrow = 3)
+ggsave("cat_plot.png", cat_plot, height = 7, width = 7, units = "in")
+```
+
+Distribution of transactions as a function of various times 
+```{r}
+ntt1 = new_trans %>% mutate("binned_date" = cut(purchase_date, "month")) %>% 
+  group_by(binned_date) %>% count() %>% 
+  ggplot(aes(x = binned_date, y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Yellow", "Pink"))(14)) + 
+  labs(x = "", y = "Number of New Transactions", 
+       title = "Distribution of Transactions \n per Range of 3 Months", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 850000), 
+                     breaks = c(0, 400000, 800000), 
+                     labels = c(0, 400000, 800000)) + 
+  theme_minimal() + theme(legend.position="none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 8),
+                          axis.title.y = element_text(size = 8), 
+                          plot.title = element_text(size = 12))
+ntt2 = new_trans %>% count(month) %>% 
+  ggplot(aes(x = as.factor(month), y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Yellow", "Pink"))(12)) + 
+  labs(x = "", y = "Number of New Transactions", 
+       title = "Distribution of Transactions per Month", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 1000000), 
+                     breaks = c(0, 500000, 1000000), 
+                     labels = c(0, 500000, 100000)) + 
+  theme_minimal() + theme(legend.position="none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 8),
+                          axis.title.y = element_text(size = 8), 
+                          plot.title = element_text(size = 12))
+ntt3 = new_trans %>% count(day) %>% 
+  ggplot(aes(x = as.factor(day), y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Yellow", "Pink"))(31)) + 
+  labs(x = "", y = "Number of New Transactions", 
+       title = "Distribution of Transactions per Day", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 80000), 
+                     breaks = c(0, 40000, 80000), 
+                     labels = c(0, 40000, 80000)) + 
+  theme_minimal() + theme(legend.position="none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 6),
+                          axis.title.y = element_text(size = 8), 
+                          plot.title = element_text(size = 12))
+ntt4 = new_trans %>% count(hour) %>% 
+  ggplot(aes(x = as.factor(hour), y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Yellow", "Pink"))(24)) + 
+  labs(x = "", y = "Number of New Transactions", 
+       title = "Distribution of Transactions by Hour", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 180000), 
+                     breaks = c(0, 90000, 180000), 
+                     labels = c(0, 90000, 180000)) + 
+  theme_minimal() + theme(legend.position="none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 6),
+                          axis.title.y = element_text(size = 8), 
+                          plot.title = element_text(size = 12))
+nt_time = grid.arrange(ntt1, ntt2, ntt3, ntt4, ncol = 2)
+ggsave("nt_time.png", nt_time, height = 7, width = 7, units = "in")
+```
+
+```{r}
+htt1 = hist_trans %>% mutate("binned_date" = cut(purchase_date, "month")) %>% 
+  group_by(binned_date) %>% count() %>% 
+  ggplot(aes(x = binned_date, y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Yellow", "Pink"))(14)) + 
+  labs(x = "", y = "Number of Historical Transactions", 
+       title = "Distribution of Transactions \n per Range of 3 Months", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 3600000), 
+                     breaks = c(0, 1800000, 3600000),
+                     labels = c(0, 1800000, 3600000)) +  
+  theme_minimal() + theme(legend.position="none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 8),
+                          axis.title.y = element_text(size = 8), 
+                          plot.title = element_text(size = 12))
+htt2 = hist_trans %>% count(month) %>% 
+  ggplot(aes(x = as.factor(month), y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Yellow", "Pink"))(12)) + 
+  labs(x = "", y = "Number of Historical Transactions", 
+       title = "Distribution of Transactions per Month", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 4500000), 
+                     breaks = c(0, 2000000, 4000000), 
+                     labels = c(0, 2000000, 4000000)) +
+  theme_minimal() + theme(legend.position="none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 8),
+                          axis.title.y = element_text(size = 8), 
+                          plot.title = element_text(size = 12))
+htt3 = hist_trans %>% count(day) %>% 
+  ggplot(aes(x = as.factor(day), y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Yellow", "Pink"))(31)) + 
+  labs(x = "", y = "Number of Historical Transactions", 
+       title = "Distribution of Transactions per Day", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 1200000), 
+                     breaks = c(0, 600000, 1200000), 
+                     labels = c(0, 600000, 1200000)) +
+  theme_minimal() + theme(legend.position="none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 8),
+                          axis.title.y = element_text(size = 8), 
+                          plot.title = element_text(size = 12))
+htt4 = hist_trans %>% count(hour) %>% 
+  ggplot(aes(x = as.factor(hour), y = n, fill = as.factor(n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Yellow", "Pink"))(24)) + 
+  labs(x = "", y = "Number of Historical Transactions", 
+       title = "Distribution of Transactions by Hour", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 2400000), 
+                     breaks = c(0, 1200000, 2400000), 
+                     labels = c(0, 1200000, 2400000)) + 
+   theme_minimal() + theme(legend.position="none", 
+                           axis.text.x = element_text(angle = 90, hjust = 1, size = 8),
+                          axis.title.y = element_text(size = 8), 
+                          plot.title = element_text(size = 12))
+ht_time = grid.arrange(htt1, htt2, htt3, htt4, ncol = 2)
+ggsave("ht_time.png", ht_time, height = 7, width = 7, units = "in")
+```
+
+Binned Number of Transactions and Target Score Distribution
+```{r}
+ntts1 = hist_trans %>% count(card_id) %>% 
+  left_join(., train, by = "card_id") %>% 
+  mutate("binned_count" = cut(n, seq(1, 110, by = 5))) %>% 
+  select(n, target, binned_count) %>% filter(!is.na(binned_count) & !is.na(target)) %>%
+  ggplot(aes(x = binned_count, y = target, fill = binned_count)) + 
+  geom_boxplot(outlier.shape = NA) +
+  scale_y_continuous(limits = c(-3,3)) + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("chocolate", "aliceblue"))(21)) + 
+  labs(x = "Number of Transactions per Card", y = "Target Score", 
+       title = "Distribution of Target Score", 
+       subtitle = "by Number of Historical Transactions Made, by Individual Cardholders") + 
+  theme_minimal() + theme(legend.position="none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 8))
+ntts2 = new_trans %>% count(card_id) %>% 
+  left_join(., train, by = "card_id") %>% 
+  mutate("binned_count" = cut(n, seq(1, 110, by = 5))) %>% 
+  select(n, target, binned_count) %>% filter(!is.na(binned_count) & !is.na(target)) %>%
+  ggplot(aes(x = binned_count, y = target, fill = binned_count)) + 
+  geom_boxplot(outlier.shape = NA) +
+  scale_y_continuous(limits = c(-3,3)) + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("chocolate", "aliceblue"))(21)) + 
+  labs(x = "Number of Transactions per Card", y = "Target Score", 
+       title = "Distribution of Target Score", 
+       subtitle = "by Number of New Transactions Made, by Individual Cardholders") + 
+  theme_minimal() + theme(legend.position="none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 8))
+ntts = grid.arrange(ntts1, ntts2, nrow = 2)
+ggsave("ntts.png", ntts, height = 7, width = 7, units = "in")
+```
+
+Installments
+```{r}
+itm1 = hist_trans %>% select(installments) %>%
+  ggplot(aes(x = installments)) + 
+  geom_histogram(binwidth = 1, fill = "darkorange", color = "black") +
+  scale_x_continuous(limits = c(0, 15), 
+                     breaks = seq(0, 15, by = 3), 
+                     labels = seq(0, 15, by = 3)) + 
+  labs(x = "number of installments", y = "number of transactions", 
+       title = "Distribution of Number of Installments", 
+       subtitle = "in Historical Transactions") + 
+  theme_minimal()
+itm2 = new_trans %>% select(installments) %>% 
+  ggplot(aes(x = installments)) + 
+  geom_histogram(binwidth = 1, fill = "darkorange", color = "black") + 
+  scale_x_continuous(limits = c(0, 15), 
+                     breaks = seq(0, 15, by = 3), 
+                     labels = seq(0, 15, by = 3)) + 
+  labs(x = "number of installments", y = "number of transactions", 
+       title = "Distribution of Number of Installments", 
+       subtitle = "in New Transactions") + 
+  theme_minimal()
+itm_count = grid.arrange(itm1, itm2, nrow = 2)
+ggsave("itm_count.png", itm_count, height = 7, width = 7, units = "in")
+```
+
+Authorized Flag Table, for both transaction types 
+```{r}
+library(xtable)
+af_table = as.data.frame(rbind("Historical Transactions" = table(hist_trans$authorized_flag), 
+                               "New Transactions" = c(0, table(new_trans$authorized_flag))))
+colnames(af_table) = c("No", "Yes")
+af_table
+print(xtable(af_table, type = "latex"), 
+      file = "authorized_flags.tex")
+```
+
+Top 10 Common IDs
+```{r}
+id_h1 = hist_trans %>% count(card_id) %>% top_n(10) %>% 
+  ggplot(aes(x = reorder(card_id, n), y = n, fill = reorder(card_id, n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Red", "Green"))(10)) + 
+  labs(x = "Card ID", y = "Number of Historical Transactions", 
+       title = "Top 10 Card IDs", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 6000), 
+                     breaks = c(0, 3000, 6000), 
+                     labels = c(0, 3000, 6000)) + coord_flip() + 
+  theme_minimal() + theme(legend.position = "none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 5), 
+                          axis.text.y = element_text(size = 5),
+                          axis.title.x = element_text(size = 8),
+                          axis.title.y = element_text(size = 8),
+                          plot.title = element_text(size = 10),
+                          plot.subtitle = element_text(size = 8))
+id_h2 = hist_trans %>% count(city_id) %>% top_n(10) %>% 
+  ggplot(aes(x = reorder(city_id, n), y = n, fill = reorder(city_id, n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Red", "Green"))(10)) + 
+  labs(x = "City ID", y = "Number of Historical Transactions", 
+       title = "Top 10 City IDs", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 6000000), 
+                     breaks = c(0, 3000000, 6000000), 
+                     labels = c(0, 3000000, 6000000)) + coord_flip() + 
+  theme_minimal() + theme(legend.position = "none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 5), 
+                          axis.text.y = element_text(size = 5),
+                          axis.title.x = element_text(size = 8),
+                          axis.title.y = element_text(size = 8),
+                          plot.title = element_text(size = 10), 
+                          plot.subtitle = element_text(size = 8))
+
+id_h3 = hist_trans %>% count(state_id) %>% top_n(10) %>% 
+  ggplot(aes(x = reorder(state_id, n), y = n, fill = reorder(state_id, n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Red", "Green"))(10)) + 
+  labs(x = "City ID", y = "Number of Historical Transactions", 
+       title = "Top 10 State IDs", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 12000000),
+                     breaks = c(0, 6000000, 12000000),
+                     labels = c(0, 6000000, 12000000)) + coord_flip() + 
+  theme_minimal() + theme(legend.position = "none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 5), 
+                          axis.text.y = element_text(size = 5),
+                          axis.title.x = element_text(size = 8),
+                          axis.title.y = element_text(size = 8),
+                          plot.title = element_text(size = 10), 
+                          plot.subtitle = element_text(size = 8))
+
+id_h4 = hist_trans %>% filter(!is.na(merchant_id)) %>% count(merchant_id) %>% top_n(10) %>% 
+  ggplot(aes(x = reorder(merchant_id, n), y = n, fill = reorder(merchant_id, n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Red", "Green"))(10)) + 
+  labs(x = "Merchant ID", y = "Number of Historical Transactions", 
+       title = "Top 10 Merchant IDs", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 1200000), 
+                     breaks = c(0, 600000, 1200000), 
+                     labels = c(0, 600000, 1200000)) + coord_flip() + 
+  theme_minimal() + theme(legend.position = "none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 5), 
+                          axis.text.y = element_text(size = 5),
+                          axis.title.x = element_text(size = 8),
+                          axis.title.y = element_text(size = 8),
+                          plot.title = element_text(size = 10), 
+                          plot.subtitle = element_text(size = 8))
+
+id_h5 = hist_trans %>% count(merchant_category_id) %>% top_n(10) %>% 
+  ggplot(aes(x = reorder(merchant_category_id, n), y = n, fill = reorder(merchant_category_id, n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Red", "Green"))(10)) + 
+  labs(x = "Merchant Category ID", y = "Number of Historical Transactions", 
+       title = "Top 10 Merchant Category IDs", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 6000000), 
+                     breaks = c(0, 3000000, 6000000), 
+                     labels = c(0, 3000000, 6000000)) + coord_flip() + 
+  theme_minimal() + theme(legend.position = "none",
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 5), 
+                          axis.text.y = element_text(size = 5),
+                          axis.title.x = element_text(size = 8),
+                          axis.title.y = element_text(size = 8),
+                          plot.title = element_text(size = 10), 
+                          plot.subtitle = element_text(size = 8))
+
+id_h6 = hist_trans %>% count(subsector_id) %>% top_n(10) %>% 
+  ggplot(aes(x = reorder(subsector_id, n), y = n, fill = reorder(subsector_id, n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Red", "Green"))(10)) + 
+  labs(x = "Subsector ID", y = "Number of Historical Transactions", 
+       title = "Top 10 Subsector IDs", 
+       subtitle = "in Historical Transactions") + 
+  scale_y_continuous(limits = c(0, 6000000), 
+                     breaks = c(0, 3000000, 6000000), 
+                     labels = c(0, 3000000, 6000000)) + coord_flip() + 
+  theme_minimal() + theme(legend.position = "none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 5), 
+                          axis.text.y = element_text(size = 5),
+                          axis.title.x = element_text(size = 8),
+                          axis.title.y = element_text(size = 8),
+                          plot.title = element_text(size = 10), 
+                          plot.subtitle = element_text(size = 8))
+
+id_n1 = new_trans %>% count(card_id) %>% top_n(10) %>% 
+  ggplot(aes(x = reorder(card_id, n), y = n, fill = reorder(card_id, n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Red", "Green"))(10)) + 
+  labs(x = "Card ID", y = "Number of New Transactions", 
+       title = "Top 10 Card IDs", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 150), 
+                     breaks = c(0, 75, 150), 
+                     labels = c(0, 75, 150)) + coord_flip() + 
+  theme_minimal() + theme(legend.position = "none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 5), 
+                          axis.text.y = element_text(size = 5),
+                          axis.title.x = element_text(size = 8),
+                          axis.title.y = element_text(size = 8),
+                          plot.title = element_text(size = 10), 
+                          plot.subtitle = element_text(size = 8))
+
+id_n2 = new_trans %>% count(city_id) %>% top_n(10) %>% 
+  ggplot(aes(x = reorder(city_id, n), y = n, fill = reorder(city_id, n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Red", "Green"))(10)) + 
+  labs(x = "City ID", y = "Number of New Transactions", 
+       title = "Top 10 City IDs", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 400000), 
+                     breaks = c(0, 200000, 400000), 
+                     labels = c(0, 200000, 400000)) + coord_flip() + 
+  theme_minimal() + theme(legend.position = "none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 5),
+                          axis.text.y = element_text(size = 5),
+                          axis.title.x = element_text(size = 8),
+                          axis.title.y = element_text(size = 8),
+                          plot.title = element_text(size = 10), 
+                          plot.subtitle = element_text(size = 8))
+
+id_n3 = new_trans %>% count(state_id) %>% top_n(10) %>% 
+  ggplot(aes(x = reorder(state_id, n), y = n, fill = reorder(state_id, n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Red", "Green"))(10)) + 
+  labs(x = "City ID", y = "Number of New Transactions",
+       title = "Top 10 State IDs", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 800000), 
+                     breaks = c(0, 400000, 800000), 
+                     labels = c(0, 400000, 800000)) + coord_flip() + 
+  theme_minimal() + theme(legend.position = "none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 5), 
+                          axis.text.y = element_text(size = 5),
+                          axis.title.x = element_text(size = 8),
+                          axis.title.y = element_text(size = 8),
+                          plot.title = element_text(size = 10),
+                          plot.subtitle = element_text(size = 8))
+
+id_n4 = new_trans %>% filter(!is.na(merchant_id)) %>% count(merchant_id) %>% top_n(10) %>% 
+  ggplot(aes(x = reorder(merchant_id, n), y = n, fill = reorder(merchant_id, n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Red", "Green"))(10)) + 
+  labs(x = "Merchant ID", y = "Number of New Transactions", 
+       title = "Top 10 Merchant IDs", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 25000), 
+                     breaks = c(0, 12500, 25000),
+                     labels = c(0, 600000, 1200000)) + coord_flip() + 
+  theme_minimal() + theme(legend.position = "none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 5), 
+                          axis.text.y = element_text(size = 5),
+                          axis.title.x = element_text(size = 8),
+                          axis.title.y = element_text(size = 8),
+                          plot.title = element_text(size = 10), 
+                          plot.subtitle = element_text(size = 8))
+
+id_n5 = new_trans %>% count(merchant_category_id) %>% top_n(10) %>% 
+  ggplot(aes(x = reorder(merchant_category_id, n), y = n, fill = reorder(merchant_category_id, n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Red", "Green"))(10)) + 
+  labs(x = "Merchant Category ID", y = "Number of New Transactions",
+       title = "Top 10 Merchant Category IDs", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 250000), 
+                     breaks = c(0, 125000, 250000), 
+                     labels = c(0, 125000, 250000)) + coord_flip() + 
+  theme_minimal() + theme(legend.position = "none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 5), 
+                          axis.text.y = element_text(size = 5),
+                          axis.title.x = element_text(size = 8),
+                          axis.title.y = element_text(size = 8),
+                          plot.title = element_text(size = 10), 
+                          plot.subtitle = element_text(size = 8))
+
+id_n6 = new_trans %>% count(subsector_id) %>% top_n(10) %>% 
+  ggplot(aes(x = reorder(subsector_id, n), y = n, fill = reorder(subsector_id, n))) + 
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(name = NULL, values = colorRampPalette(c("Red", "Green"))(10)) + 
+  labs(x = "Subsector ID", y = "Number of New Transactions",
+       title = "Top 10 Subsector IDs", 
+       subtitle = "in New Transactions") + 
+  scale_y_continuous(limits = c(0, 360000), 
+                     breaks = c(0, 180000, 360000), 
+                     labels = c(0, 180000, 360000)) + coord_flip() + 
+  theme_minimal() + theme(legend.position = "none", 
+                          axis.text.x = element_text(angle = 90, hjust = 1, size = 5), 
+                          axis.text.y = element_text(size = 5),
+                          axis.title.x = element_text(size = 8),
+                          axis.title.y = element_text(size = 8),
+                          plot.title = element_text(size = 10), 
+                          plot.subtitle = element_text(size = 8))
+id_ccs = grid.arrange(id_h1, id_h2, id_h3, id_n1, id_n2, id_n3, nrow = 2)
+id_mcs = grid.arrange(id_h4, id_h5, id_h6, id_n4, id_n5, id_n6, nrow = 2)
+ggsave("id_ccs.png", id_ccs, height = 7, width = 7, units = "in")
+ggsave("id_mcs.png", id_mcs, height = 7, width = 7, units = "in")
+```
+
+In data frame format
+```{r}
+
+top_IDs = cbind("hist_card_id" = names(sort(table(hist_trans$card_id), decreasing = TRUE)[1:10]),
+                "new_card_id" = names(sort(table(new_trans$card_id), decreasing = TRUE)[1:10]),
+                "hist_city_id" = names(sort(table(hist_trans$city_id), decreasing = TRUE)[1:10]),
+                "new_city_id" = names(sort(table(new_trans$city_id), decreasing = TRUE)[1:10]),
+                "hist_state_id" = names(sort(table(hist_trans$state_id), decreasing = TRUE)[1:10]),
+                "new_state_id" = names(sort(table(new_trans$state_id), decreasing = TRUE)[1:10]),
+                "hist_merchant_id" = names(sort(table(hist_trans$merchant_id), decreasing = TRUE)[1:10]),
+                "new_merchant_id" = names(sort(table(new_trans$merchant_id), decreasing = TRUE)[1:10]),
+                "hist_merchant_category_id" = names(sort(table(hist_trans$merchant_category_id), decreasing = TRUE)[1:10]),
+                "new_merchant_category_id" = names(sort(table(new_trans$merchant_category_id), decreasing = TRUE)[1:10]),
+                "hist_subsector_id" = names(sort(table(hist_trans$subsector_id), decreasing = TRUE)[1:10]),
+                "new_subsector_id" = names(sort(table(new_trans$subsector_id), decreasing = TRUE)[1:10]))
+as.data.frame(top_IDs)
+print(xtable(as.data.frame(top_IDs), type = "latex"), 
+      file = "top_10_IDs.tex")
+```
+
+Note: EDA of merchant information will be left out. 

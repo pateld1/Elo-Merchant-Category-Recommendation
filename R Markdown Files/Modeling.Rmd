@@ -1,0 +1,457 @@
+---
+title: "Elo Merchant Category Recommendation Modeling"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+Install packages for AWS
+```{r}
+rm(list = ls())
+install.packages("imputeMissings")
+install.packages("glmnet")
+install.packages("pls")
+install.packages("FNN")
+install.packages("xgboost")
+install.packages("testthat")
+install.packages("roxygen2")
+install.packages("devtools")
+install.packages("Matrix")
+install.packages("Ckmeans.1d.dp")
+```
+
+Run the following commands in terminal: sudo apt install cmake
+```{r}
+devtools::install_github("Laurae2/lgbdl")
+lgbdl::lgb.dl(compiler = "vs")
+library(imputeMissings)
+library(glmnet)
+library(randomForest)
+library(pls)
+library(FNN)
+library(xgboost)
+library(lightgbm)
+library(tidyverse)
+library(RColorBrewer)
+library(Ckmeans.1d.dp)
+library(xtable)
+```
+
+Read in data
+```{r}
+train = read_delim("train_modeling.csv", delim = ',') %>% subset(select = -X1)
+test = read_delim("test_modeling.csv", delim = ',') %>% subset(select = -X1)
+card_id = read_delim("test.csv", delim = ',') %>% subset(select = card_id)
+```
+
+
+```{r}
+train = impute(train)
+test = impute(test)
+```
+
+Percentage of Data in Training and Test Data
+```{r}
+paste("Training Ratio:", nrow(train) / (nrow(train) + nrow(test)))
+paste("Testing Ratio", nrow(test) / (nrow(train) + nrow(test)))
+```
+
+```{r}
+Xtrain = train[, !colnames(train) %in% c("target")]
+Ytrain = train$target
+```
+
+Create vectors to hold model names, training set RMSE, and test set RMSE
+```{r}
+model_name = c()
+training_set_rmse = c()
+testing_set_rmse = rep(0, 10)
+```
+
+## Model 1: Linear Regression on Features only
+```{r}
+lr_f = lm(target ~ feature_1 + feature_2 + feature_3, data = train)
+lr_f_tr = sqrt(mean((predict(lr_f) - Ytrain)^2))
+paste0("Training RMSE: ", lr_f_tr)
+```
+
+Export predictions on real test data from Kaggle
+```{r}
+cbind(card_id, "target" = predict(lr_f, test)) %>%
+  write_csv(paste0("elo_merchant_lm_f-", round(lr_f_tr, 5), ".csv"))
+```
+
+Save model name and RMSE
+```{r}
+model_name = c(model_name, "Linear Regression on Features Only")
+training_set_rmse = c(training_set_rmse, lr_f_tr)
+rm(lr_f)
+```
+
+## Model 2: Linear Regression on all Features
+```{r}
+lr_all = lm(target ~ ., data = train)
+lr_all_tr = sqrt(mean((predict(lr_all) - Ytrain)^2))
+paste0("Training RMSE: ", lr_all_tr)
+```
+
+Export predictions on real test data from Kaggle
+```{r}
+cbind(card_id, "target" = predict(lr_all, test)) %>%
+  write_csv(paste0("elo_merchant_lm_all-", round(lr_all_tr, 5), ".csv"))
+```
+
+Save model name and RMSE
+```{r}
+model_name = c(model_name, "Linear Regression on all Features")
+training_set_rmse = c(training_set_rmse, lr_all_tr)
+rm(lr_all)
+```
+
+
+## Model 3: Ridge Regression
+```{r}
+set.seed(2019)
+foldid = sample(rep(seq(10), length.out = nrow(Xtrain)))
+model_ridge = glmnet(as.matrix(Xtrain), Ytrain, alpha = 0)
+model_ridge_cv = cv.glmnet(as.matrix(Xtrain), Ytrain, alpha = 0, foldid = foldid)
+rir_tr = sqrt(mean((Ytrain - predict(model_ridge, s = model_ridge_cv$lambda.min, newx = as.matrix(Xtrain)))^2))
+paste0("Training RMSE: ", rir_tr)
+```
+
+Export predictions on real test data from Kaggle
+```{r}
+cbind(card_id, "target" = predict(model_ridge, s = model_ridge_cv$lambda.min, newx = as.matrix(test))) %>%
+  `colnames<-`(c("card_id", "target")) %>%
+  write_csv(paste0("elo_merchant_ridge-", round(rir_tr, 5), ".csv"))
+```
+
+Save model name and RMSE
+```{r}
+model_name = c(model_name, "Ridge Regression")
+training_set_rmse = c(training_set_rmse, rir_tr)
+rm(model_ridge, model_ridge_cv)
+```
+
+
+## Model 4: Lasso Regression
+```{r}
+model_lasso = glmnet(as.matrix(Xtrain), Ytrain, alpha = 1)
+model_lasso_cv = cv.glmnet(as.matrix(Xtrain), Ytrain, alpha = 1, foldid = foldid)
+lar_tr = sqrt(mean((Ytrain - predict(model_lasso, s = model_lasso_cv$lambda.min, newx = as.matrix(Xtrain)))^2))
+paste0("Training RMSE: ", lar_tr)
+```
+
+Export predictions on real test data from Kaggle
+```{r}
+cbind(card_id, "target" = predict(model_lasso, s = model_lasso_cv$lambda.min, newx = as.matrix(test))) %>%
+  `colnames<-`(c("card_id", "target")) %>%
+  write_csv(paste0("elo_merchant_lasso-", round(lar_tr, 5), ".csv"))
+```
+
+Save model name and RMSE
+```{r}
+model_name = c(model_name, "Lasso Regression")
+training_set_rmse = c(training_set_rmse, lar_tr)
+rm(model_lasso, model_lasso_cv)
+```
+
+## Model 5: Random Forest
+```{r}
+set.seed(2019)
+model_rf = randomForest(Xtrain, Ytrain, ntree = 25, mtry = 100, maxnodes = 100)
+rf_tr = sqrt(mean((predict(model_rf, Xtrain) - Ytrain)^2))
+paste0("Training RMSE: ", rf_tr)
+```
+
+Plot of Important Features
+```{r}
+png("rf_features_plot.png")
+varImpPlot(model_rf, main = "Top 30 Important Features found by RF", type = 2, cex = 0.75, col = "darkmagenta")
+dev.off()
+```
+
+Export predictions on real test data from Kaggle. 
+```{r}
+cbind(card_id, "target" = predict(model_rf, test)) %>%
+  `colnames<-`(c("card_id", "target")) %>%
+  write_csv(paste0("elo_merchant_rf-", round(rf_tr, 5), ".csv"))
+```
+
+Save model name and RMSE
+```{r}
+model_name = c(model_name, "Random Forest")
+training_set_rmse = c(training_set_rmse, rf_tr)
+rm(model_rf)
+```
+
+
+## Model 6: PCR
+```{r}
+set.seed(2019)
+model_pcr = pcr(target ~ ., data = train, validation = "CV")
+pcr_tr = sqrt(mean((predict(model_pcr, Xtrain, ncomp = 200) - Ytrain)^2))
+paste0("Training RMSE: ", pcr_tr)
+```
+
+Plot of RMSE vs. Number of Components
+```{r}
+png("pcr_components.png")
+validationplot(model_pcr, "RMSEP", main = "RMSE as a Function of Number of Components in PCR", col = "cadetblue4")
+dev.off()
+```
+
+Export predictions on real test data from Kaggle. 
+```{r}
+cbind(card_id, "target" = predict(model_pcr, ncomp = 200, test)) %>%
+  `colnames<-`(c("card_id", "target")) %>%
+  write_csv(paste0("elo_merchant_pcr-", round(pcr_tr, 5), ".csv"))
+```
+
+Save model name and RMSE
+```{r}
+model_name = c(model_name, "PCR")
+training_set_rmse = c(training_set_rmse, pcr_tr)
+rm(model_pcr)
+```
+
+
+## Model 7: PLS
+```{r}
+set.seed(2019)
+model_pls = plsr(target ~ ., data = train, validation = "CV")
+pls_tr = sqrt(mean((predict(model_pls, Xtrain, ncomp = 100) - Ytrain)^2))
+paste0("Training RMSE: ", pls_tr)
+```
+
+Plot of RMSE vs. Number of Components
+```{r}
+png("pls_components.png")
+validationplot(model_pls, "RMSEP", main = "RMSE as a Function of Number of Components in PLS", col = "cadetblue4")
+dev.off()
+```
+
+Export predictions on real test data from Kaggle. 
+```{r}
+cbind(card_id, "target" = predict(model_pls, ncomp = 100, test)) %>%
+  `colnames<-`(c("card_id", "target")) %>%
+  write_csv(paste0("elo_merchant_pls-", round(pls_tr, 5), ".csv"))
+```
+
+Save model name and all RMSEs
+```{r}
+model_name = c(model_name, "PLS")
+training_set_rmse = c(training_set_rmse, pls_tr)
+rm(model_pls)
+```
+
+
+## Model 8: KNN
+```{r}
+set.seed(2019)
+model_knn = knn.reg(Xtrain, Xtrain, Ytrain, k = 50)
+knn_tr = sqrt(mean((model_knn$pred - Ytrain)^2))
+paste0("Training RMSE: ", knn_tr)
+```
+
+Export predictions on real test data from Kaggle.
+```{r}
+cbind(card_id, "target" = knn.reg(Xtrain, test, Ytrain, k = 50)$pred) %>%
+  `colnames<-`(c("card_id", "target")) %>%
+  write_csv(paste0("elo_merchant_knn-", round(knn_tr, 5), ".csv"))
+```
+
+Save model name and RMSE
+```{r}
+model_name = c(model_name, "KNN")
+training_set_rmse = c(training_set_rmse, knn_tr)
+rm(model_knn)
+```
+
+
+## Model 9: XGBoost
+```{r}
+set.seed(2019)
+indices = sample(1:nrow(train), size = 0.8 * nrow(train))
+dtrain = xgb.DMatrix(as.matrix(Xtrain[indices,]), label = Ytrain[indices])
+dtest = xgb.DMatrix(as.matrix(Xtrain[-indices,]), label = Ytrain[-indices])
+watchlist =  list(train=dtrain, test=dtest)
+set.seed(2019)
+model_xgb = xgb.train(data = dtrain, watchlist = watchlist, nrounds = 500, early_stopping_rounds = 20,
+                      params = list(eta = 0.1, max_depth = 5, gamma = 0.3, max_delta_step = 10, alpha = 1))
+xgb_tr = model_xgb$evaluation_log[model_xgb$best_iteration]$train_rmse
+paste0("Training RMSE: ", xgb_tr)
+```
+
+Plot RMSEs
+```{r}
+xgb_rmse = model_xgb$evaluation_log %>% filter(iter %% 5 == 0) %>%
+  gather(key, value, train_rmse, test_rmse) %>% 
+  ggplot(aes(x = iter, y = value, color = key)) + geom_point() + 
+  scale_color_manual(name = "Data", labels = c("Test Set", "Training Set"),
+                     values = brewer.pal(8, "Paired")[c(5,6)]) +
+  scale_x_continuous(limits = c(0, 120), breaks = seq(0, 120, by = 15)) + 
+  labs(x = "Number of Iterations", y = "RMSE", 
+       title = "RMSE as a Function of Iterations ", subtitle = "in XGBoost Model") + 
+  theme_minimal() + theme(legend.position = "bottom")
+xgb_rmse
+ggsave("xgb_rmse.png", xgb_rmse, height = 7, width = 7, units = "in")
+```
+
+```{r}
+importance_matrix = xgb.importance(feature_names = colnames(Xtrain), model = model_xgb)
+png("xgb_features_plot.png")
+xgb_plot = xgb.plot.importance(importance_matrix[1:30], main = "Top 30 Important Features found by XGBoost", xlab = "Relative Importance", cex = 0.70)
+dev.off()
+```
+
+Export predictions on real test data from Kaggle. 
+```{r}
+cbind(card_id, "target" = predict(model_xgb, as.matrix(test[,colnames(Xtrain)]))) %>%
+  write_csv(paste0("elo_merchant_xgboost-", round(xgb_tr, 5), ".csv"))
+```
+
+Save model name and RMSE
+```{r}
+model_name = c(model_name, "XGBoost")
+training_set_rmse = c(training_set_rmse, xgb_tr)
+rm(model_xgb)
+```
+
+
+## Model 10: LightGBM
+```{r}
+p = list(boosting_type = "gbdt",
+          objective = "regression",
+          metric ="rmse",
+          learning_rate = 0.01)
+
+trainm = Matrix::sparse.model.matrix(target ~., data = train[indices,])
+train_label = train[indices,"target"]
+testm = Matrix::sparse.model.matrix(target ~ ., data = train[-indices,])
+test_label = train[-indices, "target"]
+train_matrix = lgb.Dataset(data = as.matrix(trainm), label = train_label)
+val_matrix = lgb.Dataset(data = as.matrix(testm), label = test_label)
+valid = list(trin = train_matrix, validation = val_matrix)
+
+gbm_train_rmse = c()
+gbm_test_rmse = c()
+for(i in 20*1:25){
+  set.seed(2019)
+  gbm_model = lightgbm(params = p, train_matrix, valid, nrounds = i, 
+                       verbose = 0)
+  training_error = gbm_model$eval_train()[[1]]$value
+  test_error = sqrt(mean((predict(gbm_model, testm) - test_label)^2))
+  gbm_train_rmse = c(gbm_train_rmse, training_error)
+  gbm_test_rmse = c(gbm_test_rmse, test_error)
+  print(i)
+  print(test_error)
+}
+```
+
+Plot of training set RMSEs
+```{r}
+gbm_rmse = data.frame("iter" = 20*1:25, "training" = gbm_train_rmse, "test" = gbm_test_rmse) %>% 
+  gather(key, value, training, test) %>% 
+  ggplot(aes(x = iter, y = value, color = key)) + geom_point() + 
+  scale_color_manual(name = "Data", labels = c("Test Set", "Training Set"),
+                     values = brewer.pal(8, "Paired")[c(3,4)]) +
+  scale_x_continuous(limits = c(0, 500), breaks = seq(0, 500, by = 25)) + 
+  labs(x = "Number of Iterations", y = "RMSE", 
+       title = "RMSE as a Function of Iterations ", subtitle = "in LightGBM Model") + 
+  theme_minimal() + theme(legend.position = "bottom")
+gbm_rmse
+ggsave("gbm_rmse_plot.png", gbm_rmse, height = 7, width = 7, units = "in")
+```
+
+Best model at 500 iterations
+```{r}
+trainm = Matrix::sparse.model.matrix(target ~., data = train)
+train_label = train[,"target"]
+testm = Matrix::sparse.model.matrix(target ~ ., data = train)
+test_label = train[, "target"]
+train_matrix = lgb.Dataset(data = as.matrix(trainm), label = train_label)
+model_gbm = lightgbm(params = p, train_matrix, valid, nrounds = 500)
+gbm_tr = model_gbm$eval_train()[[1]]$value
+paste0("Training RMSE: ", gbm_tr)
+```
+Rewrite code for plotting so top 30 important features is returned
+```{r}
+lgb.plot.importance <- function(tree_imp,
+                                top_n = 30,
+                                measure = "Gain",
+                                left_margin = 10,
+                                cex = NULL,
+                                main,
+                                col) {
+
+  # Check for measurement (column names) correctness
+  measure <- match.arg(measure, choices = c("Gain", "Cover", "Frequency"), several.ok = FALSE)
+
+  # Get top N importance (defaults to 10)
+  top_n <- min(top_n, nrow(tree_imp))
+
+  # Parse importance
+  tree_imp <- tree_imp[order(abs(get(measure)), decreasing = TRUE),][seq_len(top_n),]
+
+  # Attempt to setup a correct cex
+  if (is.null(cex)) {
+    cex <- 2.5 / log2(1 + top_n)
+  }
+
+  # Refresh plot
+  op <- graphics::par(no.readonly = TRUE)
+  on.exit(graphics::par(op))
+
+  # Do some magic plotting
+  graphics::par(mar = op$mar %>% magrittr::inset(., 2, left_margin))
+
+  # Do plot
+  tree_imp[.N:1,
+           graphics::barplot(
+               height = get(measure),
+               names.arg = Feature,
+               horiz = TRUE,
+               border = NA,
+               main = main,
+               col = col,
+               xlab = measure,
+               cex.names = cex,
+               las = 1
+           )]
+
+  # Return invisibly
+  invisible(tree_imp)
+}
+```
+
+Plot important features
+```{r}
+important_matrix = lgb.importance(model = model_gbm)
+png("lgb_features_plot.png")
+lgb.plot.importance(important_matrix, main = "Top 30 Important Features found by LightGBM", col = "cadetblue", cex = 0.7)
+dev.off()
+```
+
+Export predictions on real test data from Kaggle. 
+```{r}
+cbind(card_id, "target" = predict(model_gbm, Matrix::sparse.model.matrix(~., data = test))) %>%
+  `colnames<-`(c("card_id", "target")) %>%
+  write_csv(paste0("elo_merchant_gbm-", round(gbm_tr, 5), ".csv"))
+```
+
+Save model name and RMSE
+```{r}
+model_name = c(model_name, "LightGBM")
+training_set_rmse = c(training_set_rmse, gbm_tr)
+rm(model_gbm)
+```
+
+## Table of RMSEs
+```{r}
+rmse_df = data.frame(model_name, training_set_rmse, testing_set_rmse)
+rmse_df
+print(xtable(rmse_df, type = "latex", digits = 5), 
+             file = "model_rmses.tex")
+```
